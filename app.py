@@ -43,6 +43,26 @@ def cluster_report_names(df):
     df['Report Group ID'] = clustering.labels_
     return df
 
+def add_region_categorization(df):
+    def categorize_region(level1):
+        if level1 == 'NAT':
+            return 'NA'
+        elif level1 == 'EU':
+            return 'EU'
+        elif level1 == 'Global':
+            return 'Global'
+        elif level1 == 'LA':
+            return 'LA'
+        elif level1 in ['AP', 'APAC']:
+            return 'AP'
+        else:
+            return 'Unknown'
+
+    df['Region Categorization'] = df['Level 1'].apply(categorize_region)
+    cols = ['Region Categorization'] + [col for col in df.columns if col != 'Region Categorization']
+    df = df[cols]
+    return df
+
 def main():
     st.title("Cognos BI Environment Extractor & Report Rationalization ")
     st.write("Upload a CSV file with search paths to extract levels & rationalize them dynamically.")
@@ -53,7 +73,7 @@ def main():
         st.write(uploaded_file.name)
         
         extracted_df = process_file(uploaded_file)
-        
+        extracted_df = add_region_categorization(extracted_df)
         extracted_df = cluster_report_names(extracted_df)
 
         cols = [col for col in extracted_df.columns if col not in ['Report Group ID', 'Original Path']] + ['Report Group ID', 'Original Path']
