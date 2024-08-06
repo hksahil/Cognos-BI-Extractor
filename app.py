@@ -26,6 +26,30 @@ def extract_levels(search_path):
     data['Original Path'] = search_path
     return data
 
+keywords_to_level2 = {
+    'NAT': 'NA',
+    'NA': 'NA',
+    'EU': 'EU',
+    'Global': 'Global',
+    'LA': 'LA',
+    'AP': 'AP',
+    'APAC': 'AP'
+}
+
+flag_keywords = [
+    'CAM', 'upgrade', 'template', 'temp', 'temporary', 'old data', 'test',
+    'remove', 'audit', 'sample', 'Ibm', 'development', 'backup', 'ad hoc', 'adhoc',
+    'tableau', 'archive', 'my folder', 'not used', 'old', 'delete', 'archiv', 'obsolete',
+    'Jira', 'teradata', 'cleanup', 'bkp', 'copy', 'testing'
+]
+
+folder_keywords = ['folder', 'folder@name','latest']
+
+def replace_folder_keywords(path):
+    for keyword in folder_keywords:
+        path = path.replace(keyword, '')
+    return path
+
 def process_file(uploaded_file):
     df = pd.read_csv(uploaded_file)
     extracted_data = [extract_levels(path) for path in df['Search Path']]
@@ -43,45 +67,63 @@ def cluster_report_names(df):
     df['Report Group ID'] = clustering.labels_
     return df
 
-def add_region_categorization(df):
-    def categorize_region(level1):
-        if level1 == 'NAT':
-            return 'NA'
-        elif level1 == 'EU':
-            return 'EU'
-        elif level1 == 'Global':
-            return 'Global'
-        elif level1 == 'LA':
-            return 'LA'
-        elif level1 in ['AP', 'APAC']:
-            return 'AP'
-        else:
-            return 'Unknown'
-
-    df['Region Categorization'] = df['Level 1'].apply(categorize_region)
-    cols = ['Region Categorization'] + [col for col in df.columns if col != 'Region Categorization']
-    df = df[cols]
-    return df
-
 def main():
-    st.title("Cognos BI Environment Extractor & Report Rationalization ")
+    st.title("Cognos BI Environment Extractor & Report Rationalization")
     st.write("Upload a CSV file with search paths to extract levels & rationalize them dynamically.")
     uploaded_file = st.file_uploader("Choose a CSV file", type="csv")
 
     if uploaded_file is not None:
-        st.write("Uploaded file:")
-        st.write(uploaded_file.name)
-        
         extracted_df = process_file(uploaded_file)
-        extracted_df = add_region_categorization(extracted_df)
         extracted_df = cluster_report_names(extracted_df)
 
         cols = [col for col in extracted_df.columns if col not in ['Report Group ID', 'Original Path']] + ['Report Group ID', 'Original Path']
         extracted_df = extracted_df[cols]
 
+        # Function to categorize region based on keywords in all levels
+        def categorize_region(row):
+            for col in [col for col in row.index if col.startswith('Level')]:
+                if not pd.isna(row[col]):
+                    first_word = row[col].split()[0]
+                    for keyword, region in keywords_to_level2.items():
+                        if keyword.lower() == first_word.lower():
+                            return region
+            return 'Others'
+
+        # Adding the 'Region' column to the dataframe
+        extracted_df['Region'] = extracted_df.apply(categorize_region, axis=1)
+
+        # Adding the concatenated first words of all levels as a new column
+        def concat_first_words(row):
+            first_words = [row[col].split()[0] for col in row.index if col.startswith('Level') and not pd.isna(row[col])]
+            return '-'.join(first_words)
+
+        extracted_df['First Words Concatenated'] = extracted_df.apply(concat_first_words, axis=1)
+
+        # Adding the 'region_new' column based on the first words concatenated
+        def assign_region_new(concatenated_first_words):
+            parts = concatenated_first_words.split('-')
+            for part in parts:
+                for keyword, region in keywords_to_level2.items():
+                    if part.lower().endswith(keyword.lower()):
+                        return region
+            return 'Others'
+
+        extracted_df['region_new'] = extracted_df['First Words Concatenated'].apply(assign_region_new)
+
+        # Adding the 'flag' and 'comments' columns
+        def check_flags(path):
+            path = replace_folder_keywords(path)
+            path_lower = path.lower()
+            for keyword in flag_keywords:
+                if keyword.lower() in path_lower:
+                    return 'yes', keyword
+            return 'no', ''
+
+        extracted_df['flag'], extracted_df['comments'] = zip(*extracted_df['Original Path'].apply(check_flags))
+
         st.write("Extracted Data:")
         st.dataframe(extracted_df)
-        
+
         st.download_button(
             label="Download Extracted Levels as CSV",
             data=extracted_df.to_csv(index=False).encode('utf-8'),
