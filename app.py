@@ -34,13 +34,21 @@ def replace_folder_keywords(path):
 
 def process_file(uploaded_file):
     df = pd.read_csv(uploaded_file)
+    # Replace empty, null, or blank 'Search Path' with 'no name'
+    df['Search Path'] = df['Search Path'].fillna('').apply(lambda x: 'no name' if x.strip() == '' else x)
+    
     extracted_data = [extract_levels(path) for path in df['Search Path']]
     extracted_df = pd.DataFrame(extracted_data)
+    # Keep the input columns
+    extracted_df = pd.concat([df.reset_index(drop=True), extracted_df], axis=1)
     cols = [col for col in extracted_df.columns if col not in ['reportName', 'originalPath']] + ['reportName', 'originalPath']
     extracted_df = extracted_df[cols]
     return extracted_df
 
 def cluster_report_names(df):
+    # Ensure all entries in 'reportName' are strings and fill missing values
+    df['reportName'] = df['reportName'].astype(str).fillna('')
+
     vectorizer = TfidfVectorizer()
     X = vectorizer.fit_transform(df['reportName'])
     distance_matrix = pairwise_distances(X, metric='cosine')
@@ -76,7 +84,7 @@ def check_flags(path):
         'CAM', 'upgrade', 'template', 'temp', 'temporary', 'old data', 'test',
         'remove', 'audit', 'sample', 'Ibm', 'development', 'backup', 'ad hoc', 'adhoc',
         'tableau', 'archive', 'my folder', 'not used', 'old', 'delete', 'archiv', 'obsolete',
-        'Jira', 'teradata', 'cleanup', 'bkp', 'copy', 'testing'
+        'Jira', 'teradata', 'cleanup', 'bkp', 'copy', 'testing', '(1)','Workbook Report'
     ]
     path = replace_folder_keywords(path)
     path_lower = path.lower()
@@ -85,14 +93,47 @@ def check_flags(path):
             return 'yes', keyword
     return 'no', ''
 
+def assign_business_unit(search_path):
+    if isinstance(search_path, str):
+        business_units = {
+            'Inventory': ['inventory', 'stock', 'warehouse', 'storage', 'supply chain', 'material', 'SKU', 'capacity', 'demand planning'],
+            'Customer': ['customer', 'client', 'user', 'consumer', 'service'],
+            'Sales': ['sales', 'revenue', 'orders', 'transactions', 'deals', 'sell out', 'targets', 'dollars'],
+            'Marketing': ['marketing', 'advertisement', 'campaign', 'promotion', 'branding'],
+            'Manufacturing': ['manufacturing', 'production', 'assembly', 'factory', 'plant'],
+            'Human Resources (HR)': ['HR', 'human resources', 'employee', 'staff', 'recruitment', 'payroll'],
+            'Finance': ['finance', 'accounting', 'budget', 'expenditure', 'cost', 'profit', 'loss', 'billing', 'cash', 'invoice'],
+            'Research and Development (R&D)': ['R&D', 'research', 'development', 'innovation', 'laboratory', 'testing'],
+            'Quality Assurance (QA)': ['QA', 'quality assurance', 'inspection', 'compliance', 'standards'],
+            'IT and Support': ['IT', 'information technology', 'support', 'helpdesk', 'infrastructure'],
+            'Logistics': ['logistics', 'transportation', 'shipping', 'delivery', 'fleet', 'shipment', 'transport', 'freight', 'cargo', 'fulfillment', 'fulfilment'],
+            'Procurement': ['procurement', 'purchasing', 'supplier', 'vendor', 'sourcing'],
+            'Legal': ['legal', 'compliance', 'regulation', 'contracts', 'law', 'claims'],
+            'Miscellaneous': ['Amazon', 'travel', 'locations']
+        }
+        
+        for bu, keywords in business_units.items():
+            if any(keyword in search_path.lower() for keyword in keywords):
+                return bu
+    return 'Other'
+
 def main():
     st.title("Cognos BI Environment Extractor & Report Rationalization")
     st.write("Upload a CSV file with search paths to extract levels & rationalize them dynamically.")
     uploaded_file = st.file_uploader("Choose a CSV file", type="csv")
 
     if uploaded_file is not None:
-        extracted_df = process_file(uploaded_file)
-        extracted_df = cluster_report_names(extracted_df)
+        try:
+            extracted_df = process_file(uploaded_file)
+        except Exception as e:
+            st.error(f"Error processing file: {e}")
+            return
+
+        try:
+            extracted_df = cluster_report_names(extracted_df)
+        except Exception as e:
+            st.error(f"Error clustering report names: {e}")
+            return
 
         cols = [col for col in extracted_df.columns if col not in ['reportGroupId', 'originalPath']] + ['reportGroupId', 'originalPath']
         extracted_df = extracted_df[cols]
@@ -100,6 +141,7 @@ def main():
         extracted_df['Region Assigner'] = extracted_df.apply(concat_first_words, axis=1)
         extracted_df['Region'] = extracted_df['Region Assigner'].apply(assign_region)
         extracted_df['Flag for Decommission'], extracted_df['reasonForFlagOfDecommission'] = zip(*extracted_df['originalPath'].apply(check_flags))
+        extracted_df['Business Unit'] = extracted_df['Search Path'].apply(assign_business_unit)
 
         st.write("Extracted Data:")
         st.dataframe(extracted_df)
